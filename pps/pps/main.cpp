@@ -3,43 +3,80 @@
 #include <iostream>
 #include <tlhelp32.h>
 #include <fstream>
+#include <string.h>
 #include "main.h"
 
 int main(int argc, char* argv[])
 {
-    std::string psPath = GetRunPath() + "Photoshop.exe"; //ps����������Ŀ¼
+    std::string psPath = GetRunPath() + "Photoshop.exe"; //ps程序所在根目录
     
     if (!FileExists(psPath)) {
-        std::cerr << "û�м�⵽PS����ѳ������PS��Ŀ¼��ÿ��ʹ�ô˳���������PS��" << std::endl;
-        std::cout << "�����Ϸ�ͼƬ�������򣬱�������Դ��ݸ�PS������" << std::endl;
+        std::cerr << "没有检测到PS，请把程序放到PS根目录，每次使用此程序来启动PS。" << std::endl;
+        std::cout << "也可以拖放图片到程序，把图片路径作为参数传给PS启动。" << std::endl;
         system("pause");
         return 0;
     }
 
     DWORD proId = RunProcess(psPath, argc, argv);
 
-    int num = 4; //��֤�������ٴ��������Ϊ3�Ρ�
-    int sleepNum = 0; //����ʱ�䣬��ֹ�������
+    int num = 4; //授权窗口最多处理次数，超过3次就不管了
+    int sleepNum = 0; //累计时间，防止死循环
 
-    const std::vector<std::wstring> licenseWindowClasses = { L"EmbeddedWB", L"CefBrowserWindow", L"Chrome_WidgetWin_0" };
+    // 兼容新旧两种授权窗口类型：
+    //   旧版 IE 内嵌：顶层窗口 EmbeddedWB
+    //   新版 CEF/Chromium：EmbeddedWB → CefBrowserWindow → Chrome_WidgetWin_0 → Chrome_RenderWidgetHostHWND
+    const std::vector<std::wstring> licenseWindowClasses = {
+        L"EmbeddedWB",
+        L"CefBrowserWindow",
+        L"Chrome_WidgetWin_0",
+        L"Chrome_RenderWidgetHostHWND"
+    };
+    // CEF 子窗口类名（在 EmbeddedWB 下递归隐藏用）
+    const std::vector<std::wstring> cefChildClasses = {
+        L"CefBrowserWindow",
+        L"Chrome_WidgetWin_0",
+        L"Chrome_WidgetWin_1",
+        L"Chrome_WidgetWin_2",
+        L"Chrome_RenderWidgetHostHWND"
+    };
 
     while (true) {
         HWND psWindowId = FindWindowByProcessIdAndClassName(proId, L"Photoshop");
         if (psWindowId != nullptr) {
-            //检测授权窗口是否出现
+            // 方案1：先尝试子进程方式（兼容旧版）
             std::vector<DWORD> subPros = GetChildProcessIds(proId);
+            bool foundLicensing = false;
             for (DWORD proItem : subPros) {
                 if (GetProcessName(proItem) == "adobe_licensing_wf.exe") {
-                    HWND wfWindowId = FindWindowByProcessIdAndClassNames(proItem, licenseWindowClasses);
-                    if (wfWindowId != nullptr) { //找到授权窗口
-
+                    foundLicensing = true;
+                    HWND wfWindowId = FindWindowByProcessIdAndClassNamesDeep(proItem, licenseWindowClasses);
+                    if (wfWindowId != nullptr) {
                         if (num <= 0) {
-                            goto GOOUT; //结束等待
+                            goto GOOUT;
                         }
                         num--;
-
-                        HideWindow(wfWindowId); //隐藏授权窗口
-                        DisableWindow(psWindowId); //禁止PS进入停止状态
+                        // 递归隐藏整个窗口树（兼容 CEF 新版）
+                        HWND rootWnd = GetAncestor(wfWindowId, GA_ROOT);
+                        HideWindowTree(rootWnd, cefChildClasses);
+                        HideWindow(rootWnd);
+                        DisableWindow(psWindowId);
+                    }
+                }
+            }
+            // 方案2：全局搜索 adobe_licensing_wf.exe（兼容新版进程树变更）
+            if (!foundLicensing) {
+                std::vector<DWORD> allLicProcs = FindAllProcessesByName("adobe_licensing_wf.exe");
+                for (DWORD licPid : allLicProcs) {
+                    HWND wfWindowId = FindWindowByProcessIdAndClassNamesDeep(licPid, licenseWindowClasses);
+                    if (wfWindowId != nullptr) {
+                        if (num <= 0) {
+                            goto GOOUT;
+                        }
+                        num--;
+                        HWND rootWnd = GetAncestor(wfWindowId, GA_ROOT);
+                        HideWindowTree(rootWnd, cefChildClasses);
+                        HideWindow(rootWnd);
+                        DisableWindow(psWindowId);
                     }
                 }
             }
@@ -151,7 +188,7 @@ HWND FindWindowByProcessIdAndClassName(DWORD processId, const std::wstring& clas
     // ö�ٽ��������еĶ�������
     do
     {
-        windowHandle = FindWindowEx(NULL, windowHandle, className.c_str(), NULL);
+        windowHandle = FindWindowExW(NULL, windowHandle, className.c_str(), NULL);
 
         // ����ҵ����ڣ��������Ľ��� ID �Ƿ���ָ���Ľ��� ID ƥ��
         if (windowHandle != NULL)
@@ -257,7 +294,7 @@ std::string GetProcessName(DWORD processId)
     {
         wchar_t buffer[MAX_PATH];
         DWORD bufferSize = sizeof(buffer) / sizeof(buffer[0]);
-        if (QueryFullProcessImageName(hProcess, 0, buffer, &bufferSize) != 0)
+        if (QueryFullProcessImageNameW(hProcess, 0, buffer, &bufferSize) != 0)
         {
             std::wstring imageName(buffer);
             size_t position = imageName.find_last_of(L"\\");
@@ -272,9 +309,158 @@ std::string GetProcessName(DWORD processId)
 }
 
 
-//�ж��ļ��Ƿ����
+//判断文件是否存在
 bool FileExists(const std::string& filename)
 {
     std::ifstream infile(filename);
     return infile.good();
+}
+
+
+// === 新增：全系统按进程名查找进程ID ===
+
+// 按进程名查找单个进程ID（返回第一个匹配的）
+DWORD FindProcessByName(const std::string& processName)
+{
+    std::vector<DWORD> all = FindAllProcessesByName(processName);
+    return all.empty() ? 0 : all[0];
+}
+
+// 按进程名查找所有匹配的进程ID（全系统搜索，不限父子关系）
+std::vector<DWORD> FindAllProcessesByName(const std::string& processName)
+{
+    std::vector<DWORD> result;
+    PROCESSENTRY32 processEntry;
+    processEntry.dwSize = sizeof(PROCESSENTRY32);
+
+    HANDLE processSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (processSnapshot == INVALID_HANDLE_VALUE) {
+        return result;
+    }
+
+    if (!Process32First(processSnapshot, &processEntry)) {
+        CloseHandle(processSnapshot);
+        return result;
+    }
+
+    do {
+        std::string curName = GetProcessName(processEntry.th32ProcessID);
+        if (!curName.empty()) {
+            // 不区分大小写比较
+            if (_stricmp(curName.c_str(), processName.c_str()) == 0) {
+                result.push_back(processEntry.th32ProcessID);
+            }
+        }
+    } while (Process32Next(processSnapshot, &processEntry));
+
+    CloseHandle(processSnapshot);
+    return result;
+}
+
+
+// === 新增：深度窗口搜索（递归搜索子窗口，兼容 CEF 层级） ===
+
+// 用于 FindWindowByProcessIdAndClassNamesDeep 的顶层枚举回调数据
+struct FindWindowDeepTopData {
+    DWORD pid;
+    const std::vector<std::wstring>* classes;
+    HWND found;
+};
+
+// 顶层窗口枚举回调（__stdcall，EnumWindows 要求）
+BOOL CALLBACK FindWindowDeepTopCallback(HWND hwnd, LPARAM lParam)
+{
+    FindWindowDeepTopData* td = reinterpret_cast<FindWindowDeepTopData*>(lParam);
+    DWORD wpid = 0;
+    GetWindowThreadProcessId(hwnd, &wpid);
+    if (wpid != td->pid) return TRUE;
+
+    // 使用 FindWindowEx 迭代搜索该顶层窗口的所有子孙窗口
+    // 简单的栈遍历窗口树
+    HWND stack[128];
+    int stackSize = 0;
+    stack[stackSize++] = hwnd;
+
+    while (stackSize > 0) {
+        HWND cur = stack[--stackSize];
+
+        // 检查当前窗口类名
+        wchar_t className[256] = { 0 };
+        if (GetClassNameW(cur, className, _countof(className)) > 0) {
+            std::wstring curClass(className);
+            for (const auto& tc : *td->classes) {
+                if (_wcsicmp(curClass.c_str(), tc.c_str()) == 0) {
+                    td->found = cur;
+                    return FALSE; // 找到，停止枚举
+                }
+            }
+        }
+
+        // 将子窗口入栈
+        HWND child = FindWindowExW(cur, NULL, NULL, NULL);
+        while (child != NULL && stackSize < 128) {
+            stack[stackSize++] = child;
+            child = FindWindowExW(cur, child, NULL, NULL);
+        }
+    }
+    return TRUE;
+}
+
+// 深度搜索：先搜顶层窗口，再用 FindWindowEx 迭代遍历子窗口树
+// 兼容新版 CEF（CefBrowserWindow/Chrome_WidgetWin 是子窗口，EnumWindows 搜不到）
+// 使用栈式迭代避免 EnumChildWindows 重入问题
+HWND FindWindowByProcessIdAndClassNamesDeep(DWORD processId, const std::vector<std::wstring>& classNames)
+{
+    // 第一步：先尝试顶层窗口（最快路径，兼容旧版）
+    HWND topResult = FindWindowByProcessIdAndClassNames(processId, classNames);
+    if (topResult != NULL) {
+        return topResult;
+    }
+
+    // 第二步：枚举所有顶层窗口，对每个匹配进程的顶层窗口，迭代搜索其子窗口树
+    FindWindowDeepTopData topData;
+    topData.pid = processId;
+    topData.classes = &classNames;
+    topData.found = NULL;
+
+    EnumWindows(FindWindowDeepTopCallback, reinterpret_cast<LPARAM>(&topData));
+
+    return topData.found;
+}
+
+
+// === 新增：递归隐藏 CEF 子窗口树 ===
+
+// 使用栈式迭代遍历窗口树，隐藏所有匹配 CEF 类名的子窗口
+void HideWindowTree(HWND hwnd, const std::vector<std::wstring>& cefClasses)
+{
+    if (hwnd == NULL) return;
+
+    // 使用栈进行非递归的广度优先遍历
+    HWND stack[256];
+    int stackSize = 0;
+    stack[stackSize++] = hwnd;
+
+    while (stackSize > 0) {
+        HWND cur = stack[--stackSize];
+
+        // 检查当前窗口是否为 CEF 类，是则隐藏
+        wchar_t className[256] = { 0 };
+        if (GetClassNameW(cur, className, _countof(className)) > 0) {
+            std::wstring curClass(className);
+            for (const auto& cefClass : cefClasses) {
+                if (_wcsicmp(curClass.c_str(), cefClass.c_str()) == 0) {
+                    ShowWindow(cur, SW_HIDE);
+                    break;
+                }
+            }
+        }
+
+        // 将子窗口入栈
+        HWND child = FindWindowExW(cur, NULL, NULL, NULL);
+        while (child != NULL && stackSize < 256) {
+            stack[stackSize++] = child;
+            child = FindWindowExW(cur, child, NULL, NULL);
+        }
+    }
 }

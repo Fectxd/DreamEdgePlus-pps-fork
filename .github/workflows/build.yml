@@ -1,0 +1,44 @@
+name: Build pps
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [ARM64, x64, Win32]
+        configuration: [Release]
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Build ${{ matrix.platform }}|${{ matrix.configuration }}
+        run: |
+          msbuild pps\pps.sln `
+            /p:Configuration=${{ matrix.configuration }} `
+            /p:Platform=${{ matrix.platform }} `
+            /p:WindowsTargetPlatformVersion=10.0 `
+            /m `
+            /v:minimal
+
+      - name: Upload ${{ matrix.platform }} artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pps-${{ matrix.platform }}-${{ matrix.configuration }}
+          path: |
+            **/Release/pps.exe
+            **/Release/*.pdb
+            **/Debug/pps.exe
+            **/Debug/*.pdb
+          if-no-files-found: warn
