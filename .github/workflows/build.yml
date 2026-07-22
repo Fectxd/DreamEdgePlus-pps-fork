@@ -8,12 +8,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
-    strategy:
-      fail-fast: false
-      matrix:
-        platform: [ARM64, x64, Win32]
-        configuration: [Release]
+  build-arm64:
     runs-on: windows-latest
 
     steps:
@@ -23,22 +18,23 @@ jobs:
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
 
-      - name: Build ${{ matrix.platform }}|${{ matrix.configuration }}
+      - name: Build ARM64 Release
         run: |
           msbuild pps\pps.sln `
-            /p:Configuration=${{ matrix.configuration }} `
-            /p:Platform=${{ matrix.platform }} `
+            /p:Configuration=Release `
+            /p:Platform=ARM64 `
             /p:WindowsTargetPlatformVersion=10.0 `
+            /p:PreferredToolArchitecture=x64 `
             /m `
-            /v:minimal
+            /v:detailed 2>&1 | Select-String -Pattern "error|warning|->|Build succeeded|Build FAILED" -SimpleMatch
 
-      - name: Upload ${{ matrix.platform }} artifact
+      - name: Upload ARM64 artifact
         uses: actions/upload-artifact@v4
         with:
-          name: pps-${{ matrix.platform }}-${{ matrix.configuration }}
+          name: pps-ARM64-Release
           path: |
+            **/ARM64/Release/pps.exe
             **/Release/pps.exe
+            **/ARM64/Release/*.pdb
             **/Release/*.pdb
-            **/Debug/pps.exe
-            **/Debug/*.pdb
           if-no-files-found: warn
