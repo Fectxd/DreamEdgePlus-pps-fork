@@ -15,6 +15,23 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Install ARM64 build tools
+        shell: pwsh
+        run: |
+          $vsPath = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
+          Write-Host "VS Path: $vsPath"
+          # 列出已安装的 MSVC 版本和架构
+          Get-ChildItem "$vsPath\VC\Tools\MSVC" -Directory | ForEach-Object {
+            Write-Host "MSVC: $($_.Name)"
+            Get-ChildItem "$($_.FullName)\bin" -Directory | ForEach-Object { Write-Host "  arch: $($_.Name)" }
+          }
+          # 安装 ARM64 构建工具
+          & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vs_installer.exe" modify `
+            --installPath $vsPath `
+            --add Microsoft.VisualStudio.Component.VC.Tools.ARM64 `
+            --quiet --norestart --wait 2>&1 | Out-Null
+          Write-Host "ARM64 tools installed (exit: $LASTEXITCODE)"
+
       - name: Build ARM64 Release
         shell: pwsh
         run: |
@@ -30,6 +47,4 @@ jobs:
           path: |
             **/ARM64/Release/pps.exe
             **/Release/pps.exe
-            **/ARM64/Release/*.pdb
-            **/Release/*.pdb
           if-no-files-found: warn
