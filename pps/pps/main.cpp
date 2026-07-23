@@ -19,20 +19,18 @@ int main(int argc, char* argv[])
 
     DWORD proId = RunProcess(psPath, argc, argv);
 
-    int num = 4; //授权窗口最多处理次数，超过3次就不管了
-    int sleepNum = 0; //累计时间，防止死循环
+    int suppressCount = 0;         // 已隐藏次数
+    const int maxSuppress = 10;    // 最多隐藏10次
+    int elapsed = 0;               // 累计时间 (x100ms)
 
-    // 兼容新旧两种授权窗口类型：
-    //   旧版 IE 内嵌：顶层窗口 EmbeddedWB
-    //   新版 CEF/Chromium：EmbeddedWB → CefBrowserWindow → Chrome_WidgetWin_0 → Chrome_RenderWidgetHostHWND
-    //   CI: windows-2022 runner, v143 toolset, ARM64 cross-compile
+    // 兼容新旧两种授权窗口类型
     const std::vector<std::wstring> licenseWindowClasses = {
         L"EmbeddedWB",
         L"CefBrowserWindow",
         L"Chrome_WidgetWin_0",
         L"Chrome_RenderWidgetHostHWND"
     };
-    // CEF 子窗口类名（在 EmbeddedWB 下递归隐藏用）
+    // CEF 子窗口类名
     const std::vector<std::wstring> cefChildClasses = {
         L"CefBrowserWindow",
         L"Chrome_WidgetWin_0",
@@ -41,66 +39,86 @@ int main(int argc, char* argv[])
         L"Chrome_RenderWidgetHostHWND"
     };
 
-    while (true) {
-        HWND psWindowId = FindWindowByProcessIdAndClassName(proId, L"Photoshop");
-        if (psWindowId != nullptr) {
-            // 方案1：先尝试子进程方式（兼容旧版）
-            std::vector<DWORD> subPros = GetChildProcessIds(proId);
-            bool foundLicensing = false;
-            for (DWORD proItem : subPros) {
-                if (GetProcessName(proItem) == "adobe_licensing_wf.exe") {
-                    foundLicensing = true;
-                    HWND wfWindowId = FindWindowByProcessIdAndClassNamesDeep(proItem, licenseWindowClasses);
-                    if (wfWindowId != nullptr) {
-                        if (num <= 0) {
-                            goto GOOUT;
-                        }
-                        num--;
-                        // 先隐藏窗口树
-                        HWND rootWnd = GetAncestor(wfWindowId, GA_ROOT);
-                        HideWindowTree(rootWnd, cefChildClasses);
-                        HideWindow(rootWnd);
-                        // 终止授权进程（阻止 CEF JS 继续通信）
-                        TerminateProcessById(proItem);
-                        DisableWindow(psWindowId);
-                    }
-                }
-            }
-            // 方案2：全局搜索 adobe_licensing_wf.exe（兼容新版进程树变更）
-            if (!foundLicensing) {
-                std::vector<DWORD> allLicProcs = FindAllProcessesByName("adobe_licensing_wf.exe");
-                for (DWORD licPid : allLicProcs) {
-                    HWND wfWindowId = FindWindowByProcessIdAndClassNamesDeep(licPid, licenseWindowClasses);
-                    if (wfWindowId != nullptr) {
-                        if (num <= 0) {
-                            goto GOOUT;
-                        }
-                        num--;
-                        HWND rootWnd = GetAncestor(wfWindowId, GA_ROOT);
-                        HideWindowTree(rootWnd, cefChildClasses);
-                        HideWindow(rootWnd);
-                        // 终止授权进程
-                        TerminateProcessById(licPid);
-                        DisableWindow(psWindowId);
-                    }
-                }
-            }
+    // === 阶段1：等待PS启动并抑制授权窗口 ===
+    while (elapsed < 1200) { // 最多等120秒
+        // 检查PS是否还在运行
+        HANDLE hPS = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, proId);
+        if (hPS == NULL) {
+            return 0; // PS已退出
         }
-        Sleep(100); //等待PS启动完成
+        CloseHandle(hPS);
 
-        if (sleepNum >= 1200) { //120秒还没出现授权窗口就退出
-            return 0;
+        // 查找并隐藏授权窗口
+        DWORD licPid = 0;
+        bool foundLicense = FindLicenseProcess(proId, licPid);
+        
+        if (foundLicense) {
+            HWND wfWindowId = FindWindowByProcessIdAndClassNamesDeep(licPid, licenseWindowClasses);
+            if (wfWindowId != nullptr && suppressCount < maxSuppress) {
+                suppressCount++;
+                HWND rootWnd = GetAncestor(wfWindowId, GA_ROOT);
+                HideWindowTree(rootWnd, cefChildClasses);
+                HideWindow(rootWnd);
+            }
         }
-        sleepNum++;
+
+        // 始终确保PS窗口处于启用状态
+        HWND psWnd = FindWindowByProcessIdAndClassName(proId, L"Photoshop");
+        if (psWnd != nullptr) {
+            DisableWindow(psWnd);
+        }
+
+        Sleep(100);
+        elapsed++;
     }
-    GOOUT:
 
-    // 最终检查：稍等一下，确保授权机制已完成所有禁用操作
-    Sleep(1500);
-    // 重新启用 Photoshop 的所有顶层窗口（防止菜单/工具栏灰色）
-    EnableAllProcessWindows(proId);
+    // === 阶段2：后台守护（PS运行期间持续监控） ===
+    while (true) {
+        // PS还在吗？
+        HANDLE hPS = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, proId);
+        if (hPS == NULL) {
+            return 0; // PS已退出，我们也退出
+        }
+        CloseHandle(hPS);
 
+        // 隐藏新出现的授权窗口
+        DWORD licPid = 0;
+        if (FindLicenseProcess(proId, licPid)) {
+            HWND wfWindowId = FindWindowByProcessIdAndClassNamesDeep(licPid, licenseWindowClasses);
+            if (wfWindowId != nullptr) {
+                HWND rootWnd = GetAncestor(wfWindowId, GA_ROOT);
+                HideWindowTree(rootWnd, cefChildClasses);
+                HideWindow(rootWnd);
+            }
+        }
+
+        // 持续确保PS的所有窗口都处于启用状态
+        EnableAllProcessWindows(proId);
+
+        Sleep(2000); // 每2秒检查一次，降低CPU占用
+    }
     return 0;
+}
+
+// 查找授权进程（先在子进程中找，再全局搜索）
+// 返回 true 并设置 outPid 如果找到
+bool FindLicenseProcess(DWORD parentPid, DWORD& outPid)
+{
+    // 方案1：子进程
+    std::vector<DWORD> subPros = GetChildProcessIds(parentPid);
+    for (DWORD pid : subPros) {
+        if (GetProcessName(pid) == "adobe_licensing_wf.exe") {
+            outPid = pid;
+            return true;
+        }
+    }
+    // 方案2：全局搜索
+    std::vector<DWORD> allPros = FindAllProcessesByName("adobe_licensing_wf.exe");
+    if (!allPros.empty()) {
+        outPid = allPros[0];
+        return true;
+    }
+    return false;
 }
 
 
