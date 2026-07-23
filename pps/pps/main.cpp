@@ -59,6 +59,8 @@ int main(int argc, char* argv[])
                 HWND rootWnd = GetAncestor(wfWindowId, GA_ROOT);
                 HideWindowTree(rootWnd, cefChildClasses);
                 HideWindow(rootWnd);
+                // 发 WM_CLOSE 让授权窗口正常关闭，释放 PS 的模态等待
+                PostCloseToLicenseWindows(licPid, licenseWindowClasses);
             }
         }
 
@@ -81,7 +83,7 @@ int main(int argc, char* argv[])
         }
         CloseHandle(hPS);
 
-        // 隐藏新出现的授权窗口
+        // 隐藏新出现的授权窗口并发送关闭消息
         DWORD licPid = 0;
         if (FindLicenseProcess(proId, licPid)) {
             HWND wfWindowId = FindWindowByProcessIdAndClassNamesDeep(licPid, licenseWindowClasses);
@@ -89,6 +91,7 @@ int main(int argc, char* argv[])
                 HWND rootWnd = GetAncestor(wfWindowId, GA_ROOT);
                 HideWindowTree(rootWnd, cefChildClasses);
                 HideWindow(rootWnd);
+                PostCloseToLicenseWindows(licPid, licenseWindowClasses);
             }
         }
 
@@ -316,6 +319,39 @@ void TerminateProcessById(DWORD processId)
         TerminateProcess(hProcess, 0);
         CloseHandle(hProcess);
     }
+}
+
+// 向授权进程的匹配窗口发送 WM_CLOSE，触发正常关闭以释放 PS 的模态等待
+
+struct PostCloseData {
+    DWORD pid;
+    const std::vector<std::wstring>* classes;
+};
+
+BOOL CALLBACK PostCloseCallback(HWND hwnd, LPARAM lParam)
+{
+    PostCloseData* data = reinterpret_cast<PostCloseData*>(lParam);
+    DWORD wpid = 0;
+    GetWindowThreadProcessId(hwnd, &wpid);
+    if (wpid != data->pid) return TRUE;
+
+    wchar_t cls[256] = { 0 };
+    GetClassNameW(hwnd, cls, _countof(cls));
+    for (const auto& cn : *data->classes) {
+        if (_wcsicmp(cls, cn.c_str()) == 0) {
+            PostMessageW(hwnd, WM_CLOSE, 0, 0);
+            break;
+        }
+    }
+    return TRUE;
+}
+
+void PostCloseToLicenseWindows(DWORD processId, const std::vector<std::wstring>& classNames)
+{
+    PostCloseData data;
+    data.pid = processId;
+    data.classes = &classNames;
+    EnumWindows(PostCloseCallback, reinterpret_cast<LPARAM>(&data));
 }
 
 //����ָ���Ĵ���
