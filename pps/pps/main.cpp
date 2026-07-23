@@ -18,7 +18,24 @@ int main(int argc, char* argv[])
         return 0;
     }
 
-    DWORD proId = RunProcess(psPath, argc, argv);
+    // 如果没有传入文件，创建临时空白图片让PS进入编辑模式（避开严格license检查）
+    std::string tempFile;
+    if (argc <= 1) {
+        tempFile = CreateTempPng();
+    }
+
+    DWORD proId;
+    if (!tempFile.empty()) {
+        char* newArgv[3] = { argv[0], const_cast<char*>(tempFile.c_str()), nullptr };
+        proId = RunProcess(psPath, 2, newArgv);
+    } else {
+        proId = RunProcess(psPath, argc, argv);
+    }
+
+    if (proId == 0) {
+        std::cerr << "无法启动 Photoshop。" << std::endl;
+        return 1;
+    }
 
     int suppressCount = 0;         // 已隐藏次数
     const int maxSuppress = 10;    // 最多隐藏10次
@@ -99,6 +116,43 @@ int main(int argc, char* argv[])
         Sleep(2000); // 每2秒检查一次，降低CPU占用
     }
     return 0;
+}
+
+// 创建临时1x1透明PNG，用于无文件参数时让PS进入编辑模式
+std::string CreateTempPng()
+{
+    // 1x1 透明 PNG (68 bytes)
+    static const unsigned char pngData[] = {
+        0x89,0x50,0x4E,0x47,0x0D,0x0A,0x1A,0x0A,0x00,0x00,0x00,0x0D,0x49,0x48,0x44,0x52,
+        0x00,0x00,0x00,0x01,0x00,0x00,0x00,0x01,0x08,0x06,0x00,0x00,0x00,0x1F,0x15,0xC4,0x89,
+        0x00,0x00,0x00,0x0D,0x49,0x44,0x41,0x54,0x78,0x9C,0x62,0x60,0xF8,0xCF,0x50,0x0F,0x00,
+        0x03,0x61,0x80,0x81,0x5A,0x34,0x7D,0x6B,0x00,0x00,0x00,0x00,0x49,0x45,0x4E,0x44,0xAE,
+        0x42,0x60,0x82
+    };
+
+    wchar_t tempPath[MAX_PATH];
+    wchar_t tempFile[MAX_PATH];
+    if (!GetTempPathW(MAX_PATH, tempPath)) return "";
+    if (!GetTempFileNameW(tempPath, L"pps", 0, tempFile)) return "";
+
+    // 替换扩展名为 .png
+    std::wstring wFilePath(tempFile);
+    size_t dot = wFilePath.find_last_of(L'.');
+    if (dot != std::wstring::npos) {
+        wFilePath = wFilePath.substr(0, dot);
+    }
+    wFilePath += L".png";
+
+    HANDLE hFile = CreateFileW(wFilePath.c_str(), GENERIC_WRITE, 0, NULL,
+        CREATE_ALWAYS, FILE_ATTRIBUTE_TEMPORARY, NULL);
+    if (hFile == INVALID_HANDLE_VALUE) return "";
+
+    DWORD written;
+    WriteFile(hFile, pngData, sizeof(pngData), &written, NULL);
+    CloseHandle(hFile);
+
+    std::string result(wFilePath.begin(), wFilePath.end());
+    return result;
 }
 
 // 查找授权进程（先在子进程中找，再全局搜索）
