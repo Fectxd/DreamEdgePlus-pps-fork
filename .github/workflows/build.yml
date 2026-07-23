@@ -9,36 +9,17 @@ on:
 
 jobs:
   build-arm64:
-    runs-on: windows-latest
+    runs-on: windows-2022
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install ARM64 build tools
-        shell: pwsh
-        run: |
-          $vsPath = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
-          Write-Host "VS Path: $vsPath"
-          # 列出已安装的 MSVC 版本和架构
-          Get-ChildItem "$vsPath\VC\Tools\MSVC" -Directory | ForEach-Object {
-            Write-Host "MSVC: $($_.Name)"
-            Get-ChildItem "$($_.FullName)\bin" -Directory | ForEach-Object { Write-Host "  arch: $($_.Name)" }
-          }
-          # 安装 ARM64 构建工具
-          & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vs_installer.exe" modify `
-            --installPath $vsPath `
-            --add Microsoft.VisualStudio.Component.VC.Tools.ARM64 `
-            --quiet --norestart --wait 2>&1 | Out-Null
-          Write-Host "ARM64 tools installed (exit: $LASTEXITCODE)"
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
 
       - name: Build ARM64 Release
-        shell: pwsh
-        run: |
-          $vsPath = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
-          Import-Module "$vsPath\Common7\Tools\Microsoft.VisualStudio.DevShell.dll" -Force
-          Enter-VsDevShell -VsInstallPath $vsPath -SkipAutomaticLocation -DevCmdArguments "-arch=arm64 -host_arch=amd64"
-          msbuild pps\pps.sln /p:Configuration=Release /p:Platform=ARM64 /m /v:minimal
+        run: msbuild pps\pps.sln /p:Configuration=Release /p:Platform=ARM64 /m /v:minimal
 
       - name: Upload ARM64 artifact
         uses: actions/upload-artifact@v4
