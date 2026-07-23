@@ -25,6 +25,8 @@ void DisableWindow(HWND hwnd); //解除窗口禁用状态
 
 void EnableAllProcessWindows(DWORD processId); //重新启用指定进程的所有已禁用顶层窗口
 
+void TerminateProcessById(DWORD processId); //终止指定进程
+
 void HideWindow(HWND hwnd); //隐藏指定窗口
 
 std::string GetWindowTitle(HWND hwnd); //根据窗口hwnd获取窗口标题

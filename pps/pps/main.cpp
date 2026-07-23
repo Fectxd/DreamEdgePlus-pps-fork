@@ -56,10 +56,12 @@ int main(int argc, char* argv[])
                             goto GOOUT;
                         }
                         num--;
-                        // 递归隐藏整个窗口树（兼容 CEF 新版）
+                        // 先隐藏窗口树
                         HWND rootWnd = GetAncestor(wfWindowId, GA_ROOT);
                         HideWindowTree(rootWnd, cefChildClasses);
                         HideWindow(rootWnd);
+                        // 终止授权进程（阻止 CEF JS 继续通信）
+                        TerminateProcessById(proItem);
                         DisableWindow(psWindowId);
                     }
                 }
@@ -77,6 +79,8 @@ int main(int argc, char* argv[])
                         HWND rootWnd = GetAncestor(wfWindowId, GA_ROOT);
                         HideWindowTree(rootWnd, cefChildClasses);
                         HideWindow(rootWnd);
+                        // 终止授权进程
+                        TerminateProcessById(licPid);
                         DisableWindow(psWindowId);
                     }
                 }
@@ -284,6 +288,16 @@ void EnableAllProcessWindows(DWORD processId)
     EnableAllData data;
     data.pid = processId;
     EnumWindows(EnableAllWindowsCallback, reinterpret_cast<LPARAM>(&data));
+}
+
+// 终止指定进程
+void TerminateProcessById(DWORD processId)
+{
+    HANDLE hProcess = OpenProcess(PROCESS_TERMINATE, FALSE, processId);
+    if (hProcess != NULL) {
+        TerminateProcess(hProcess, 0);
+        CloseHandle(hProcess);
+    }
 }
 
 //����ָ���Ĵ���
