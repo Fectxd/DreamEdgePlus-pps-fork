@@ -91,10 +91,11 @@ int main(int argc, char* argv[])
     }
     GOOUT:
 
-    //std::cout << FindWindowByProcessIdAndClassName(proId, L"Photoshop");
-    //std::cout << FindWindowByProcessIdAndClassName(15448, L"abc");
-    //DisableWindow(FindWindowByProcessIdAndClassName(23312, L"Photoshop"));
-    //HideWindow(FindWindowByProcessIdAndClassName(18092, L"EmbeddedWB"));
+    // 最终检查：稍等一下，确保授权机制已完成所有禁用操作
+    Sleep(1500);
+    // 重新启用 Photoshop 的所有顶层窗口（防止菜单/工具栏灰色）
+    EnableAllProcessWindows(proId);
+
     return 0;
 }
 
@@ -251,12 +252,38 @@ HWND FindWindowByProcessIdAndClassNames(DWORD processId, const std::vector<std::
 }
 
 
-//解除窗口禁用状态（使用标准 EnableWindow API，确保子窗口也恢复）
+//解除窗口禁用状态（标准 EnableWindow + 强制重绘非客户区）
 void DisableWindow(HWND hwnd)
 {
     if (!IsWindowEnabled(hwnd)) {
         EnableWindow(hwnd, TRUE);
+        // 强制重绘整个窗口，包括菜单栏等非客户区，以及所有子窗口
+        RedrawWindow(hwnd, NULL, NULL, RDW_INVALIDATE | RDW_UPDATENOW | RDW_FRAME | RDW_ALLCHILDREN);
     }
+}
+
+// 枚举回调：重新启用指定进程的所有已禁用顶层窗口
+struct EnableAllData { DWORD pid; };
+BOOL CALLBACK EnableAllWindowsCallback(HWND hwnd, LPARAM lParam)
+{
+    EnableAllData* data = reinterpret_cast<EnableAllData*>(lParam);
+    DWORD wpid = 0;
+    GetWindowThreadProcessId(hwnd, &wpid);
+    if (wpid == data->pid) {
+        if (!IsWindowEnabled(hwnd)) {
+            EnableWindow(hwnd, TRUE);
+            RedrawWindow(hwnd, NULL, NULL, RDW_INVALIDATE | RDW_UPDATENOW | RDW_FRAME | RDW_ALLCHILDREN);
+        }
+    }
+    return TRUE;
+}
+
+// 重新启用指定进程的所有顶层窗口
+void EnableAllProcessWindows(DWORD processId)
+{
+    EnableAllData data;
+    data.pid = processId;
+    EnumWindows(EnableAllWindowsCallback, reinterpret_cast<LPARAM>(&data));
 }
 
 //����ָ���Ĵ���
