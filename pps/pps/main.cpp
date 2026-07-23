@@ -26,16 +26,11 @@ int main(int argc, char* argv[])
 
     DWORD proId = 0;
     if (!tempFile.empty()) {
-        // 关键：ShellExecute图片文件本身，让系统通过文件关联启动PS
-        // 这与双击图片/Acrobat调用的路径完全一致
+        // 方式1：ShellExecute图片文件，通过系统文件关联启动PS（与双击文件一致）
         proId = RunProcessViaFile(tempFile);
     }
-    if (proId == 0 && argc > 1) {
-        // 回退：用户传了文件，直接启动PS并传参
-        proId = RunProcess(psPath, argc, argv);
-    }
     if (proId == 0) {
-        // 最后兜底：无参数启动PS
+        // 方式2：直接ShellExecute Photoshop.exe（兜底）
         proId = RunProcess(psPath, argc, argv);
     }
 
@@ -401,7 +396,7 @@ void EnableAllProcessWindows(DWORD processId)
     EnumWindows(EnableAllWindowsCallback, reinterpret_cast<LPARAM>(&data));
 }
 
-// 终止指定进程
+// 终止指定进程（保留供将来使用，当前版本未调用）
 void TerminateProcessById(DWORD processId)
 {
     HANDLE hProcess = OpenProcess(PROCESS_TERMINATE, FALSE, processId);
@@ -411,41 +406,7 @@ void TerminateProcessById(DWORD processId)
     }
 }
 
-// 向授权进程的匹配窗口发送 WM_CLOSE，触发正常关闭以释放 PS 的模态等待
-
-struct PostCloseData {
-    DWORD pid;
-    const std::vector<std::wstring>* classes;
-};
-
-BOOL CALLBACK PostCloseCallback(HWND hwnd, LPARAM lParam)
-{
-    PostCloseData* data = reinterpret_cast<PostCloseData*>(lParam);
-    DWORD wpid = 0;
-    GetWindowThreadProcessId(hwnd, &wpid);
-    if (wpid != data->pid) return TRUE;
-
-    wchar_t cls[256] = { 0 };
-    GetClassNameW(hwnd, cls, _countof(cls));
-    for (const auto& cn : *data->classes) {
-        if (_wcsicmp(cls, cn.c_str()) == 0) {
-            // 模拟用户点击关闭按钮（比 WM_CLOSE 更接近真实用户行为）
-            PostMessageW(hwnd, WM_SYSCOMMAND, SC_CLOSE, 0);
-            break;
-        }
-    }
-    return TRUE;
-}
-
-void PostCloseToLicenseWindows(DWORD processId, const std::vector<std::wstring>& classNames)
-{
-    PostCloseData data;
-    data.pid = processId;
-    data.classes = &classNames;
-    EnumWindows(PostCloseCallback, reinterpret_cast<LPARAM>(&data));
-}
-
-//����ָ���Ĵ���
+//隐藏指定窗口
 void HideWindow(HWND hwnd)
 {
     ShowWindow(hwnd, SW_HIDE);

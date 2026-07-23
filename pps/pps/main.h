@@ -33,8 +33,6 @@ std::string CreateTempPng(); //创建临时PNG让PS进入编辑模式
 
 bool FindLicenseProcess(DWORD parentPid, DWORD& outPid); //查找授权进程
 
-void PostCloseToLicenseWindows(DWORD processId, const std::vector<std::wstring>& classNames); //向授权窗口发WM_CLOSE
-
 void HideWindow(HWND hwnd); //隐藏指定窗口
 
 std::string GetWindowTitle(HWND hwnd); //根据窗口hwnd获取窗口标题
