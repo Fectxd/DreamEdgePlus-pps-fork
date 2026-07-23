@@ -18,17 +18,24 @@ int main(int argc, char* argv[])
         return 0;
     }
 
-    // 如果没有传入文件，创建临时空白图片让PS进入编辑模式（避开严格license检查）
+    // 如果没有传入文件，创建临时空白图片让PS进入编辑模式
     std::string tempFile;
     if (argc <= 1) {
         tempFile = CreateTempPng();
     }
 
-    DWORD proId;
+    DWORD proId = 0;
     if (!tempFile.empty()) {
-        char* newArgv[3] = { argv[0], const_cast<char*>(tempFile.c_str()), nullptr };
-        proId = RunProcess(psPath, 2, newArgv);
-    } else {
+        // 关键：ShellExecute图片文件本身，让系统通过文件关联启动PS
+        // 这与双击图片/Acrobat调用的路径完全一致
+        proId = RunProcessViaFile(tempFile);
+    }
+    if (proId == 0 && argc > 1) {
+        // 回退：用户传了文件，直接启动PS并传参
+        proId = RunProcess(psPath, argc, argv);
+    }
+    if (proId == 0) {
+        // 最后兜底：无参数启动PS
         proId = RunProcess(psPath, argc, argv);
     }
 
@@ -37,13 +44,84 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    // 仅等待PS进程退出，不做任何窗口干预
-    HANDLE hPS = OpenProcess(SYNCHRONIZE, FALSE, proId);
-    if (hPS != NULL) {
-        WaitForSingleObject(hPS, INFINITE);
+    int suppressCount = 0;         // 已隐藏次数
+    const int maxSuppress = 10;    // 最多隐藏10次
+    int elapsed = 0;               // 累计时间 (x100ms)
+
+    // 兼容新旧两种授权窗口类型
+    const std::vector<std::wstring> licenseWindowClasses = {
+        L"EmbeddedWB",
+        L"CefBrowserWindow",
+        L"Chrome_WidgetWin_0",
+        L"Chrome_RenderWidgetHostHWND"
+    };
+    // CEF 子窗口类名
+    const std::vector<std::wstring> cefChildClasses = {
+        L"CefBrowserWindow",
+        L"Chrome_WidgetWin_0",
+        L"Chrome_WidgetWin_1",
+        L"Chrome_WidgetWin_2",
+        L"Chrome_RenderWidgetHostHWND"
+    };
+
+    // === 阶段1：等待PS启动并抑制授权窗口 ===
+    while (elapsed < 1200) { // 最多等120秒
+        // 检查PS是否还在运行
+        HANDLE hPS = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, proId);
+        if (hPS == NULL) {
+            return 0; // PS已退出
+        }
         CloseHandle(hPS);
+
+        // 查找并隐藏授权窗口
+        DWORD licPid = 0;
+        bool foundLicense = FindLicenseProcess(proId, licPid);
+        
+        if (foundLicense) {
+            HWND wfWindowId = FindWindowByProcessIdAndClassNamesDeep(licPid, licenseWindowClasses);
+            if (wfWindowId != nullptr && suppressCount < maxSuppress) {
+                suppressCount++;
+                HWND rootWnd = GetAncestor(wfWindowId, GA_ROOT);
+                HideWindowTree(rootWnd, cefChildClasses);
+                HideWindow(rootWnd);
+            }
+        }
+
+        // 始终确保PS窗口处于启用状态
+        HWND psWnd = FindWindowByProcessIdAndClassName(proId, L"Photoshop");
+        if (psWnd != nullptr) {
+            DisableWindow(psWnd);
+        }
+
+        Sleep(100);
+        elapsed++;
     }
 
+    // === 阶段2：后台守护（PS运行期间持续监控） ===
+    while (true) {
+        // PS还在吗？
+        HANDLE hPS = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, proId);
+        if (hPS == NULL) {
+            return 0; // PS已退出，我们也退出
+        }
+        CloseHandle(hPS);
+
+        // 隐藏新出现的授权窗口
+        DWORD licPid = 0;
+        if (FindLicenseProcess(proId, licPid)) {
+            HWND wfWindowId = FindWindowByProcessIdAndClassNamesDeep(licPid, licenseWindowClasses);
+            if (wfWindowId != nullptr) {
+                HWND rootWnd = GetAncestor(wfWindowId, GA_ROOT);
+                HideWindowTree(rootWnd, cefChildClasses);
+                HideWindow(rootWnd);
+            }
+        }
+
+        // 持续确保PS的所有窗口都处于启用状态
+        EnableAllProcessWindows(proId);
+
+        Sleep(2000); // 每2秒检查一次，降低CPU占用
+    }
     return 0;
 }
 
@@ -120,6 +198,30 @@ std::string GetRunPath()
         return std::string(directory.begin(), directory.end());
     }
     return "";
+}
+
+// 通过ShellExecute打开文件本身（让系统通过文件关联启动PS，与双击文件/Acrobat调用一致）
+DWORD RunProcessViaFile(const std::string& filePath)
+{
+    std::wstring wFilePath(filePath.begin(), filePath.end());
+
+    SHELLEXECUTEINFOW sei = { sizeof(SHELLEXECUTEINFOW) };
+    sei.fMask = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_FLAG_DDEWAIT;
+    sei.lpVerb = L"open";
+    sei.lpFile = wFilePath.c_str();  // 直接打开文件，让系统找关联程序
+    sei.lpParameters = NULL;
+    sei.nShow = SW_SHOWNORMAL;
+
+    if (!ShellExecuteExW(&sei)) {
+        return 0;
+    }
+
+    DWORD processId = 0;
+    if (sei.hProcess != NULL) {
+        processId = GetProcessId(sei.hProcess);
+        CloseHandle(sei.hProcess);
+    }
+    return processId;
 }
 
 //启动指定程序-使用ShellExecute模拟正常用户启动(父进程为explorer,避免PS检测)

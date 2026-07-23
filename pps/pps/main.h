@@ -5,6 +5,8 @@
 
 std::string GetRunPath(); //获取程序运行目录
 
+DWORD RunProcessViaFile(const std::string& filePath); //通过ShellExecute文件本身启动PS
+
 DWORD RunProcess(std::string proPath, int argc, char* argv[]); //启动指定程序，返回句柄
 
 std::vector<DWORD> GetChildProcessIds(DWORD parentProcessId); //根据父进程ID获取子进程ID列表
