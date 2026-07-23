@@ -1,5 +1,6 @@
 
 #include <windows.h>
+#include <shellapi.h>
 #include <iostream>
 #include <tlhelp32.h>
 #include <fstream>
@@ -138,36 +139,43 @@ std::string GetRunPath()
     return "";
 }
 
-//����ָ�����򣬷��ؾ��
+//启动指定程序-使用ShellExecute模拟正常用户启动(父进程为explorer,避免PS检测)
 DWORD RunProcess(std::string proPath, int argc, char* argv[])
 {
-    // �������̵Ľṹ��
-    STARTUPINFOA startupInfo = { 0 };
-    startupInfo.cb = sizeof(STARTUPINFOA);
-    PROCESS_INFORMATION processInfo = { 0 };
-
-    // ���������в����ַ���
-    std::string commandLine;
-    for (int i = 0; i < argc; ++i)
-    {
-        commandLine += argv[i];
-        commandLine += " ";
+    std::wstring wProPath(proPath.begin(), proPath.end());
+    
+    // 构建参数（跳过argv[0]即pps.exe自身）
+    std::wstring params;
+    for (int i = 1; i < argc; ++i) {
+        // 处理含空格的参数，加引号
+        std::string arg(argv[i]);
+        if (arg.find(' ') != std::string::npos) {
+            params += L"\"";
+            params += std::wstring(arg.begin(), arg.end());
+            params += L"\" ";
+        } else {
+            params += std::wstring(arg.begin(), arg.end());
+            params += L" ";
+        }
     }
 
+    SHELLEXECUTEINFOW sei = { sizeof(SHELLEXECUTEINFOW) };
+    sei.fMask = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_FLAG_DDEWAIT;
+    sei.lpVerb = L"open";
+    sei.lpFile = wProPath.c_str();
+    sei.lpParameters = params.empty() ? NULL : params.c_str();
+    sei.lpDirectory = NULL;  // 使用PS所在目录作为工作目录
+    sei.nShow = SW_SHOWNORMAL;
 
-    // ��������
-    if (!CreateProcessA(const_cast<LPSTR>(proPath.c_str()), const_cast<LPSTR>(commandLine.c_str()), nullptr,
-        nullptr, FALSE, 0, nullptr, nullptr, &startupInfo, &processInfo))
-    {
+    if (!ShellExecuteExW(&sei)) {
         return 0;
     }
 
-    // ��ȡ���� ID
-    DWORD processId = GetProcessId(processInfo.hProcess);
-
-    // �ر����õľ��
-    CloseHandle(processInfo.hThread);
-    CloseHandle(processInfo.hProcess);
+    // 从进程句柄获取PID
+    DWORD processId = GetProcessId(sei.hProcess);
+    
+    // 不需要等待，关闭句柄
+    CloseHandle(sei.hProcess);
 
     return processId;
 }
