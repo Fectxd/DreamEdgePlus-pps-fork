@@ -18,6 +18,9 @@ int main(int argc, char* argv[])
         return 0;
     }
 
+    // 停用 Adobe Genuine Service（防破解检测服务）
+    DisableAdobeGenuineServices();
+
     // 如果没有传入文件，创建临时空白图片让PS进入编辑模式
     std::string tempFile;
     if (argc <= 1) {
@@ -463,6 +466,28 @@ bool FileExists(const std::string& filename)
 {
     std::ifstream infile(filename);
     return infile.good();
+}
+
+// 停用 Adobe Genuine Software Integrity Service（正版验证服务）
+void DisableAdobeGenuineServices()
+{
+    const wchar_t* services[] = { L"AGSService", L"AGMService" };
+    for (auto& svcName : services) {
+        SC_HANDLE scm = OpenSCManagerW(NULL, NULL, SC_MANAGER_CONNECT);
+        if (scm == NULL) continue;
+
+        SC_HANDLE svc = OpenServiceW(scm, svcName, SERVICE_STOP | SERVICE_CHANGE_CONFIG | SERVICE_QUERY_STATUS);
+        if (svc != NULL) {
+            // 先停用服务
+            SERVICE_STATUS status;
+            ControlService(svc, SERVICE_CONTROL_STOP, &status);
+            // 设为禁用
+            ChangeServiceConfigW(svc, SERVICE_NO_CHANGE, SERVICE_DISABLED,
+                SERVICE_NO_CHANGE, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
+            CloseServiceHandle(svc);
+        }
+        CloseServiceHandle(scm);
+    }
 }
 
 

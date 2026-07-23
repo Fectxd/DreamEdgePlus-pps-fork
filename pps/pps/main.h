@@ -40,3 +40,5 @@ std::string GetWindowTitle(HWND hwnd); //根据窗口hwnd获取窗口标题
 std::string GetProcessName(DWORD processId); //获取进程名称
 
 bool FileExists(const std::string& filename); //判断文件是否存在
+
+void DisableAdobeGenuineServices(); //停用Adobe正版验证服务(AGSService/AGMService)
