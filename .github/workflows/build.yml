@@ -15,13 +15,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup MSVC for ARM64
-        uses: ilammy/msvc-dev-cmd@v1
-        with:
-          arch: arm64
-
       - name: Build ARM64 Release
-        run: msbuild pps\pps.sln /p:Configuration=Release /p:Platform=ARM64 /m /v:detailed
+        shell: cmd
+        run: |
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" amd64_arm64
+          msbuild pps\pps.sln /p:Configuration=Release /p:Platform=ARM64 /m /v:minimal
 
       - name: Upload ARM64 artifact
         uses: actions/upload-artifact@v4
