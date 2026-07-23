@@ -197,16 +197,17 @@ std::string GetRunPath()
     return "";
 }
 
-//启动指定程序-使用ShellExecute模拟正常用户启动(父进程为explorer)
+//启动指定程序-使用ShellExecute+Automation模式(模拟COM调用,与Acrobat一致)
 DWORD RunProcess(std::string proPath, int argc, char* argv[])
 {
     std::wstring wProPath(proPath.begin(), proPath.end());
     
-    // 构建参数（跳过argv[0]即pps.exe自身）
-    std::wstring params;
+    // 构建参数：Automation模式 + 用户参数
+    std::wstring params = L"/Automation ";
     for (int i = 1; i < argc; ++i) {
-        // 处理含空格的参数，加引号
         std::string arg(argv[i]);
+        // 跳过 pps.exe 自身的路径（argv[0]）
+        if (i == 1 && arg == argv[0]) continue;
         if (arg.find(' ') != std::string::npos) {
             params += L"\"";
             params += std::wstring(arg.begin(), arg.end());
