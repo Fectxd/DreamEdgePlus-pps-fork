@@ -59,8 +59,6 @@ int main(int argc, char* argv[])
                 HWND rootWnd = GetAncestor(wfWindowId, GA_ROOT);
                 HideWindowTree(rootWnd, cefChildClasses);
                 HideWindow(rootWnd);
-                // 发 WM_CLOSE 让授权窗口正常关闭，释放 PS 的模态等待
-                PostCloseToLicenseWindows(licPid, licenseWindowClasses);
             }
         }
 
@@ -83,7 +81,7 @@ int main(int argc, char* argv[])
         }
         CloseHandle(hPS);
 
-        // 隐藏新出现的授权窗口并发送关闭消息
+        // 隐藏新出现的授权窗口
         DWORD licPid = 0;
         if (FindLicenseProcess(proId, licPid)) {
             HWND wfWindowId = FindWindowByProcessIdAndClassNamesDeep(licPid, licenseWindowClasses);
@@ -91,7 +89,6 @@ int main(int argc, char* argv[])
                 HWND rootWnd = GetAncestor(wfWindowId, GA_ROOT);
                 HideWindowTree(rootWnd, cefChildClasses);
                 HideWindow(rootWnd);
-                PostCloseToLicenseWindows(licPid, licenseWindowClasses);
             }
         }
 
@@ -339,7 +336,8 @@ BOOL CALLBACK PostCloseCallback(HWND hwnd, LPARAM lParam)
     GetClassNameW(hwnd, cls, _countof(cls));
     for (const auto& cn : *data->classes) {
         if (_wcsicmp(cls, cn.c_str()) == 0) {
-            PostMessageW(hwnd, WM_CLOSE, 0, 0);
+            // 模拟用户点击关闭按钮（比 WM_CLOSE 更接近真实用户行为）
+            PostMessageW(hwnd, WM_SYSCOMMAND, SC_CLOSE, 0);
             break;
         }
     }
