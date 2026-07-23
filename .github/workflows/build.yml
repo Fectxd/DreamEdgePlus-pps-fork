@@ -15,25 +15,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Check VS & ARM64 tools
-        shell: pwsh
-        run: |
-          Write-Host "=== VS Installations ==="
-          & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -all -property installationPath
-          Write-Host "=== MSVC ARM64 dir ==="
-          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
-          Get-ChildItem "$vs\VC\Tools\MSVC" -Directory | Select-Object -First 3
-          Write-Host "=== vcvarsall.bat exists? ==="
-          Test-Path "$vs\VC\Auxiliary\Build\vcvarsall.bat"
-
       - name: Build ARM64 Release
         shell: pwsh
         run: |
           $vsPath = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
-          Write-Host "VS: $vsPath"
           Import-Module "$vsPath\Common7\Tools\Microsoft.VisualStudio.DevShell.dll" -Force
           Enter-VsDevShell -VsInstallPath $vsPath -SkipAutomaticLocation -DevCmdArguments "-arch=arm64 -host_arch=amd64"
-          msbuild pps\pps.sln /p:Configuration=Release /p:Platform=ARM64 /m /v:normal
+          msbuild pps\pps.sln /p:Configuration=Release /p:Platform=ARM64 /m /v:minimal
 
       - name: Upload ARM64 artifact
         uses: actions/upload-artifact@v4
