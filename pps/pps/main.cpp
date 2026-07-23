@@ -251,11 +251,12 @@ HWND FindWindowByProcessIdAndClassNames(DWORD processId, const std::vector<std::
 }
 
 
-//������ڽ�ֹ״̬
+//解除窗口禁用状态（使用标准 EnableWindow API，确保子窗口也恢复）
 void DisableWindow(HWND hwnd)
 {
-    LONG_PTR style = GetWindowLongPtr(hwnd, GWL_STYLE);
-    SetWindowLongPtr(hwnd, GWL_STYLE, style & ~WS_DISABLED);
+    if (!IsWindowEnabled(hwnd)) {
+        EnableWindow(hwnd, TRUE);
+    }
 }
 
 //����ָ���Ĵ���
