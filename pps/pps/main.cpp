@@ -25,6 +25,7 @@ int main(int argc, char* argv[])
     // 兼容新旧两种授权窗口类型：
     //   旧版 IE 内嵌：顶层窗口 EmbeddedWB
     //   新版 CEF/Chromium：EmbeddedWB → CefBrowserWindow → Chrome_WidgetWin_0 → Chrome_RenderWidgetHostHWND
+    //   CI: windows-2022 runner, v143 toolset, ARM64 cross-compile
     const std::vector<std::wstring> licenseWindowClasses = {
         L"EmbeddedWB",
         L"CefBrowserWindow",
